@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Seoul Trip 2026</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #FFFDF0; /* 極簡淡黃 */
+            color: #4A4A4A;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .card-shadow { box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03); }
+        .active-date { background-color: #FDE68A !important; transform: scale(1.05); }
+        #map { height: 250px; border-radius: 16px; margin-bottom: 20px; z-index: 1; }
+    </style>
+</head>
+<body>
+    <div id="app" class="max-w-md mx-auto min-h-screen pb-24">
+        
+        <!-- Header -->
+        <header class="p-6 pb-2">
+            <h1 class="text-2xl font-medium tracking-tight">首爾行 <span class="text-sm font-light text-gray-400">Apr 29 - May 03</span></h1>
+        </header>
+
+        <!-- 橫向滑動日期選單 -->
+        <div class="flex overflow-x-auto px-6 py-4 gap-4 hide-scrollbar">
+            <button 
+                v-for="(day, index) in itinerary" 
+                :key="index"
+                @click="currentDayIndex = index"
+                :class="['flex-shrink-0 w-16 h-20 rounded-2xl flex flex-col items-center justify-center transition-all bg-white card-shadow', 
+                        currentDayIndex === index ? 'active-date' : '']"
+            >
+                <span class="text-xs opacity-60">{{ day.week }}</span>
+                <span class="text-lg font-bold">{{ day.date.split('/')[0] }}</span>
+                <span class="text-[10px] uppercase">{{ monthName }}</span>
+            </button>
+        </div>
+
+        <!-- 天氣資訊卡片 -->
+        <div class="px-6 mb-4">
+            <div class="bg-white/60 backdrop-blur rounded-2xl p-4 flex items-center justify-between card-shadow">
+                <div class="flex items-center gap-3">
+                    <span class="text-3xl">{{ weather.icon }}</span>
+                    <div>
+                        <p class="text-sm font-medium">Seoul 預測溫度</p>
+                        <p class="text-xs text-gray-500">{{ weather.temp }}°C / {{ weather.desc }}</p>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <p class="text-[10px] text-gray-400">現在位置</p>
+                    <p class="text-xs font-medium">聖水洞 / 弘大區</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 地圖區域 -->
+        <div class="px-6">
+            <div id="map" class="card-shadow"></div>
+        </div>
+
+        <!-- 行程列表 -->
+        <div class="px-6 space-y-4">
+            <div v-for="(item, i) in currentDay.events" :key="i" class="bg-white rounded-2xl p-5 card-shadow group relative">
+                <div class="flex justify-between items-start mb-2">
+                    <span class="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded-md">{{ item.time }}</span>
+                    <button @click="removeEvent(i)" class="text-gray-300 hover:text-red-400 text-sm">✕</button>
+                </div>
+                <h3 class="text-md font-medium mb-1">{{ item.location }}</h3>
+                <p v-if="item.note" class="text-sm text-gray-400 font-light border-l-2 border-amber-100 pl-3 mt-2 italic">
+                    {{ item.note }}
+                </p>
+            </div>
+            
+            <!-- 新增行程按鈕 -->
+            <button @click="showAddModal = true" class="w-full py-4 border-2 border-dashed border-amber-200 rounded-2xl text-amber-400 text-sm font-light hover:bg-amber-50 transition-colors">
+                + 新增行程點
+            </button>
+        </div>
+
+        <!-- 記帳與匯率功能 -->
+        <div class="px-6 mt-8">
+            <div class="bg-[#FDF9E7] rounded-3xl p-6">
+                <h2 class="text-lg font-medium mb-4 flex justify-between">
+                    預算開支 
+                    <span class="text-xs font-light text-gray-500">1 KRW ≈ {{ exchangeRate }} HKD</span>
+                </h2>
+                
+                <div class="space-y-3 mb-6">
+                    <div v-for="(exp, i) in expenses" :key="i" class="flex justify-between text-sm">
+                        <span class="text-gray-600">{{ exp.item }}</span>
+                        <span class="font-medium">₩ {{ exp.krw }} <span class="text-[10px] text-gray-400">($ {{ (exp.krw * exchangeRate).toFixed(2) }})</span></span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <input v-model="newExp.item" placeholder="項目" class="bg-white rounded-xl px-3 py-2 text-sm outline-none">
+                    <input v-model.number="newExp.krw" type="number" placeholder="KRW金額" class="bg-white rounded-xl px-3 py-2 text-sm outline-none">
+                </div>
+                <button @click="addExpense" class="w-full mt-2 bg-stone-800 text-white rounded-xl py-2 text-sm">紀錄支出</button>
+            </div>
+        </div>
+
+        <!-- 備用景點 -->
+        <div class="px-6 mt-8 pb-10">
+            <h2 class="text-lg font-medium mb-4">備用景點 / 猛男騷</h2>
+            <div class="grid grid-cols-2 gap-3">
+                <div v-for="spot in backupSpots" class="bg-white p-3 rounded-xl card-shadow text-xs text-center border border-amber-50">
+                    {{ spot }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Bar (手機 App 感) -->
+        <nav class="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-gray-100 px-8 py-4 flex justify-between items-center z-50 max-w-md mx-auto">
+            <div class="flex flex-col items-center text-amber-500">
+                <span class="text-xl">📅</span>
+                <span class="text-[10px]">行程</span>
+            </div>
+            <div class="flex flex-col items-center text-gray-400">
+                <span class="text-xl">💰</span>
+                <span class="text-[10px]">分帳</span>
+            </div>
+            <div class="flex flex-col items-center text-gray-400">
+                <span class="text-xl">📍</span>
+                <span class="text-[10px]">地圖</span>
+            </div>
+        </nav>
+
+        <!-- 簡單的新增 Modal -->
+        <div v-if="showAddModal" class="fixed inset-0 bg-black/20 backdrop-blur-sm z-[100] flex items-end">
+            <div class="bg-white w-full rounded-t-3xl p-8 max-w-md mx-auto">
+                <h3 class="text-lg font-medium mb-4">加入新地點</h3>
+                <input v-model="newEvent.time" placeholder="時間 (例如 14:00)" class="w-full mb-3 p-3 bg-gray-50 rounded-xl outline-none">
+                <input v-model="newEvent.location" placeholder="地點名稱" class="w-full mb-3 p-3 bg-gray-50 rounded-xl outline-none">
+                <textarea v-model="newEvent.note" placeholder="備註內容" class="w-full mb-6 p-3 bg-gray-50 rounded-xl outline-none"></textarea>
+                <div class="flex gap-3">
+                    <button @click="showAddModal = false" class="flex-1 py-3 text-gray-400">取消</button>
+                    <button @click="addEvent" class="flex-1 py-3 bg-amber-200 rounded-xl">確認加入</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, watch } = Vue;
+
+        createApp({
+            setup() {
+                const currentDayIndex = ref(0);
+                const exchangeRate = ref(0.0058); // 匯率參考：1000 KRW = 5.8 HKD
+                const showAddModal = ref(false);
+                const map = ref(null);
+                const markers = [];
+
+                const itinerary = ref([
+                    { 
+                        date: '29/4', week: 'Wed', 
+                        events: [
+                            { time: '11:50', location: '仁川機場 (ICN) 到著', note: '領取行李、買 T-money', lat: 37.4602, lng: 126.4407 },
+                            { time: '14:00', location: '酒店寄放行李', note: '首爾車站附近', lat: 37.5559, lng: 126.9723 },
+                            { time: '15:00', location: '剪頭髮', note: '分店選擇：聖水、新村或弘大。若選聖水可直接在那行街。', lat: 37.5445, lng: 127.0560 }
+                        ] 
+                    },
+                    { 
+                        date: '30/4', week: 'Thu', 
+                        events: [
+                            { time: '14:00', location: '弘大個人色彩診斷', note: 'Personal Color Analysis', lat: 37.5575, lng: 126.9245 }
+                        ] 
+                    },
+                    { 
+                        date: '01/5', week: 'Fri', 
+                        events: [
+                            { time: '全日', location: '聖水洞行街', note: 'Dior Pop-up, 咖啡廳探索', lat: 37.5445, lng: 127.0560 }
+                        ] 
+                    },
+                    { 
+                        date: '02/5', week: 'Sat', 
+                        events: [
+                            { time: '11:00', location: '弘大 Lunch', note: '醫美前先吃飽', lat: 37.5575, lng: 126.9245 },
+                            { time: '14:30', location: '弘大醫美 Clinic', note: '療程完事後在弘大食晚飯', lat: 37.5575, lng: 126.9245 }
+                        ] 
+                    },
+                    { 
+                        date: '03/5', week: 'Sun', 
+                        events: [
+                            { time: '上午', location: 'Check out / 首爾站 Lotte Outlet', note: '行李可鎖在車站', lat: 37.5545, lng: 126.9707 },
+                            { time: '下午', location: '樂天超市 Lotte Mart', note: '最後採買零食', lat: 37.5545, lng: 126.9707 },
+                            { time: '19:00', location: '出發機場', note: '搭乘 AREX 直達', lat: 37.5559, lng: 126.9723 },
+                            { time: '22:30', location: '仁川機場起飛', note: '回家嚕', lat: 37.4602, lng: 126.4407 }
+                        ] 
+                    }
+                ]);
+
+                const expenses = ref([
+                    { item: 'AREX 車票', krw: 9500 },
+                    { item: '個人色彩預約', krw: 80000 }
+                ]);
+
+                const backupSpots = ref(['Wild Wild 猛男騷', '景福宮韓服', '漢江公園拉麵', '廣藏市場美食']);
+                
+                const newEvent = ref({ time: '', location: '', note: '' });
+                const newExp = ref({ item: '', krw: null });
+
+                const currentDay = computed(() => itinerary.value[currentDayIndex.ref || 0] || itinerary.value[0]);
+                const monthName = 'Apr/May';
+
+                const weather = ref({ icon: '☀️', temp: '18', desc: '晴時多雲' });
+
+                // 初始化地圖
+                const initMap = () => {
+                    map.value = L.map('map').setView([37.5665, 126.9780], 12);
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                        attribution: '&copy; OpenStreetMap'
+                    }).addTo(map.value);
+                    updateMapMarkers();
+                };
+
+                const updateMapMarkers = () => {
+                    if (!map.value) return;
+                    markers.forEach(m => map.value.removeLayer(m));
+                    const currentEvents = itinerary.value[currentDayIndex.value].events;
+                    
+                    const validPoints = currentEvents.filter(e => e.lat && e.lng);
+                    if (validPoints.length > 0) {
+                        validPoints.forEach(e => {
+                            const marker = L.marker([e.lat, e.lng]).addTo(map.value)
+                                .bindPopup(`<b>${e.time}</b><br>${e.location}`);
+                            markers.push(marker);
+                        });
+                        const group = new L.featureGroup(markers);
+                        map.value.fitBounds(group.getBounds().pad(0.5));
+                    }
+                };
+
+                watch(currentDayIndex, () => {
+                    updateMapMarkers();
+                });
+
+                const addEvent = () => {
+                    if (newEvent.value.location) {
+                        itinerary.value[currentDayIndex.value].events.push({...newEvent.value});
+                        newEvent.value = { time: '', location: '', note: '' };
+                        showAddModal.value = false;
+                    }
+                };
+
+                const removeEvent = (index) => {
+                    itinerary.value[currentDayIndex.value].events.splice(index, 1);
+                    updateMapMarkers();
+                };
+
+                const addExpense = () => {
+                    if (newExp.value.item && newExp.value.krw) {
+                        expenses.value.push({...newExp.value});
+                        newExp.value = { item: '', krw: null };
+                    }
+                };
+
+                onMounted(() => {
+                    initMap();
+                    // 模擬天氣獲取
+                    fetch('https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.9780&current_weather=true')
+                        .then(res => res.json())
+                        .then(data => {
+                            weather.value.temp = Math.round(data.current_weather.temperature);
+                        });
+                });
+
+                return {
+                    itinerary, currentDayIndex, currentDay, monthName, 
+                    expenses, newExp, addExpense, exchangeRate,
+                    backupSpots, showAddModal, newEvent, addEvent, removeEvent,
+                    weather
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
